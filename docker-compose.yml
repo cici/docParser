@@ -1,0 +1,169 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: docparser
+      POSTGRES_USER: docparser
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docparser -d docparser"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Local Temporal Server (for development)
+  temporal:
+    image: temporalio/auto-setup:1.20.1
+    ports:
+      - "7233:7233"
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=temporal
+      - POSTGRES_PWD=temporal
+      - POSTGRES_SEEDS=temporal-postgres
+    depends_on:
+      temporal-postgres:
+        condition: service_healthy
+    volumes:
+      - ./temporal/dynamicconfig:/etc/temporal/config/dynamicconfig
+
+  # PostgreSQL for Temporal
+  temporal-postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: temporal
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: temporal
+    ports:
+      - "5433:5432"
+    volumes:
+      - temporal_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal -d temporal"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Temporal Web UI
+  temporal-web:
+    image: temporalio/ui:2.10.1
+    ports:
+      - "8088:8088"
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000,http://localhost:8088
+      - TEMPORAL_UI_PORT=8088
+    depends_on:
+      - temporal
+
+  # Application (API Server)
+  docparser-api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USERNAME=docparser
+      - DB_PASSWORD=password
+      - TEMPORAL_ENDPOINT=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      # Local file processing - no AWS credentials needed
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Worker Instances
+  docparser-worker-1:
+    build: .
+    command: ["java", "-jar", "/app/doc-parser-1.0.0.jar", "--spring.main.class=com.example.docparser.worker.TemporalWorkerApplication"]
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USERNAME=docparser
+      - DB_PASSWORD=password
+      - TEMPORAL_ENDPOINT=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      # Local file processing - no AWS credentials needed
+      - WORKER_ID=worker-1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+
+  docparser-worker-2:
+    build: .
+    command: ["java", "-jar", "/app/doc-parser-1.0.0.jar", "--spring.main.class=com.example.docparser.worker.TemporalWorkerApplication"]
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USERNAME=docparser
+      - DB_PASSWORD=password
+      - TEMPORAL_ENDPOINT=temporal:7233
+      - TEMPORAL_NAMESPACE=default
+      # Local file processing - no AWS credentials needed
+      - WORKER_ID=worker-2
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+
+  # Prometheus (for monitoring)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+
+  # Grafana (for dashboards)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+
+volumes:
+  postgres_data:
+  temporal_postgres_data:
+  prometheus_data:
+  grafana_data:

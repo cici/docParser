@@ -1,0 +1,35 @@
+# Dynamic configuration for Temporal server
+
+# Basic worker configuration
+system.blobSizeErrorLimit:
+  - value: 2000000
+    constraints: {}
+
+system.enableLogCustomerQueryParameter:
+  - value: true
+
+system.enableCrossNamespaceCommands:
+  - value: true
+
+# Enable gRPC middleware
+system.enableGRPCMiddleware:
+  - value: true
+
+# Enable worker versioning
+worker.buildIdScavengerEnabled:
+  - value: true
+
+# History service config
+history.workflowTaskHeartbeatTimeout:
+  - value: "30s"
+
+# Frontend service config  
+frontend.httpInternalAPIPort:
+  - value: 7243
+
+# Matching service config
+matching.numTasklistWritePartitions:
+  - value: 4
+
+matching.numTasklistReadPartitions:
+  - value: 4
